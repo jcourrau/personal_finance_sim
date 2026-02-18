@@ -1,0 +1,16 @@
+__pycache__/
+*.pyc
+.venv/
+.env
+.ipynb_checkpoints/
+dist/
+build/
+*.egg-info/
+.coverage
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# PyCharm
+.idea/
+*.iml
