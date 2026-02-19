@@ -18,3 +18,5 @@ class PaymentPlan(ABC):
         {loan_id: extra_payment}
         """
         pass
+
+# Plans can't allocate free cash to inactive_loan_ids
