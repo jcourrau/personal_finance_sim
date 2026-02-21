@@ -21,6 +21,13 @@ This repository currently exposes a Python package only (no CLI yet). The main e
   - `sqlalchemy`
 
 
+## Requirements
+- Python 3.10 or newer
+- pip (or another PEP 517 compatible installer)
+- Recommended: virtual environment (e.g., `venv`)
+- OS: Windows, macOS, or Linux
+
+
 ## Installation
 Install in editable/development mode with optional dev tools.
 
@@ -142,7 +149,9 @@ finance_sim/
 │     │  └─ plans.py              # Abstract PaymentPlan
 │     ├─ data/
 │     │  ├─ __init__.py
-│     │  └─ db.py                 # Placeholder for DB access (empty today)
+│     │  ├─ db.py                 # Placeholder for DB access (empty today)
+│     │  ├─ loader.py             # Data loading helpers
+│     │  └─ orm_models.py         # SQLAlchemy models (if/when used)
 │     ├─ engine/
 │     │  ├─ __init__.py
 │     │  ├─ calendar.py
@@ -156,6 +165,7 @@ finance_sim/
    ├─ test_calendar.py
    ├─ test_imports.py
    ├─ test_series_builders.py
+   ├─ test_simulation_scenarios.py
    └─ test_simulator_loop.py
 ```
 

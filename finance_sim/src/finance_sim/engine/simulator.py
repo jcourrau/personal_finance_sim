@@ -1,6 +1,6 @@
 from __future__ import annotations
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 from finance_sim.core.loan import Loan
 from finance_sim.core.plans import PaymentPlan
@@ -44,6 +44,13 @@ def _assert_consecutive_months(months: List[str]) -> None:
             raise ValueError(f"Months are not consecutive: {months[index - 1]} -> {months[index]}")
 
 
+def _initialize_loans(loans: List[Loan]) -> None:
+    """
+    Resets loan balances before running a simulation.
+    """
+    for loan in loans:
+        loan.reset_balance()
+
 def _next_month(month: str) -> str:
     """
     Returns the next month as YYYY-MM.
@@ -55,7 +62,7 @@ def _get_month_inputs(
     month: str,
     income_series: Dict[str, float],
     expense_series: Dict[str, float],
-) -> Tuple[float, float]:
+) -> tuple[float, float]:
     """
     Returns income and baseline expenses for the month.
 
@@ -123,6 +130,17 @@ def _get_allocation(
     return allocation
 
 
+def _empty_totals():
+    totals = {
+        "debt_cash_out": 0.0,
+        "interest_paid": 0.0,
+        "penalty_paid": 0.0,
+        "paid_principal": 0.0,
+        "debt_balance_end": 0.0,
+    }
+    return totals
+
+
 def _apply_loan_steps(
     month: str,
     active_loans: List[Loan],
@@ -134,21 +152,14 @@ def _apply_loan_steps(
 
     Returns monthly totals used by the cashflow row.
     """
-    totals = {
-        "extra_payment": 0.0,
-        "interest_paid": 0.0,
-        "penalty_paid": 0.0,
-        "paid_principal": 0.0,
-        "debt_balance_end": 0.0,
-    }
+    totals = _empty_totals()
 
     for loan in active_loans:
         extra_payment = float(allocation.get(loan.loan_id, 0.0))
-
         record = loan.step(month=month, extra_payment=extra_payment)
         schedule_rows.append(record)
 
-        totals["extra_payment"] += extra_payment
+        totals["debt_cash_out"] += float(record.get("cash_out", 0.0))
         totals["interest_paid"] += float(record.get("interest_paid", 0.0))
         totals["penalty_paid"] += float(record.get("penalty_paid", 0.0))
         totals["paid_principal"] += float(record.get("paid_principal", 0.0))
@@ -157,45 +168,13 @@ def _apply_loan_steps(
     return totals
 
 
-def _append_cashflow_row(
-    cashflow_rows: List[Dict],
-    month: str,
-    income: float,
-    baseline_expenses: float,
-    minimum_payments: float,
-    free_cash: float,
-    totals: Dict[str, float],
-) -> None:
-    """
-    Appends one consolidated cashflow record for the month.
-    """
-    cashflow_rows.append(
-        {
-            "month": month,
-            "income": income,
-            "baseline_expenses": baseline_expenses,
-            "minimum_payments": minimum_payments,
-            "free_cash": free_cash,
-            "extra_payment": totals["extra_payment"],
-            "interest_paid": totals["interest_paid"],
-            "penalty_paid": totals["penalty_paid"],
-            "paid_principal": totals["paid_principal"],
-            "debt_balance_end": totals["debt_balance_end"],
-        }
-    )
-
-
 def _all_loans_cleared(loans: List[Loan]) -> bool:
     """
     Returns True only when all loans are fully paid.
 
-    Rule:
-    - If a loan has a numeric balance, it must be <= 0 to be considered cleared.
-    - If a loan does not expose balance yet, we cannot confirm payoff, so we return False.
+    Rule: If a loan has a numeric balance, it must be <= 0 to be considered cleared.
     """
     for loan in loans:
-        if loan.balance is None:
-            return False
         if float(loan.balance) > 0:
             return False
     return True
@@ -235,41 +214,48 @@ def run_simulation(
     cashflow_rows: List[Dict] = []
     schedule_rows: List[Dict] = []
 
-    # 2. Monthly loop
+    # 2. Initialize Loans Balance
+    _initialize_loans(loans)
+
+    # 3. Monthly loop
     for month in months:
         if end_month is not None and month > end_month:
             break
 
-        # 2.1 Inputs for this month
         income, baseline_expenses = _get_month_inputs(month, income_series, expense_series)
-
-        # 2.2 Active loans and required minimum payments
         active_loans = _get_active_loans(month, loans)
         minimum_payments = _sum_minimum_payments(month, active_loans)
+        original_free_cash = _calculate_free_cash(income, baseline_expenses, minimum_payments)
 
-        # 2.3 Free cash calculation
-        free_cash = _calculate_free_cash(income, baseline_expenses, minimum_payments)
+        if active_loans:
+            allocation = _get_allocation(plan, month, original_free_cash, active_loans)
+            totals = _apply_loan_steps(month, active_loans, allocation, schedule_rows)
+        else:
+            totals = _empty_totals()
 
-        # 2.4 Plan allocation for extra payments
-        allocation = _get_allocation(plan, month, free_cash, active_loans)
+        free_cash_after_debt = original_free_cash - totals["debt_cash_out"]
+        free_cash_after_debt = 0.0 if 0 > free_cash_after_debt > -1e-9 else free_cash_after_debt
 
-        # 2.5 Apply loan steps and capture loan schedule rows
-        totals = _apply_loan_steps(month, active_loans, allocation, schedule_rows)
-
-        # 2.6 Append cashflow row
-        _append_cashflow_row(
-            cashflow_rows,
-            month,
-            income,
-            baseline_expenses,
-            minimum_payments,
-            free_cash,
-            totals,
+        #  Append cashflow row
+        cashflow_rows.append(
+            {
+                "month": month,
+                "income": income,
+                "baseline_expenses": baseline_expenses,
+                "minimum_payments": minimum_payments,
+                "free_cash_after_minimum_payments": original_free_cash,
+                "debt_cash_out": totals["debt_cash_out"],
+                "free_cash_after_debt": free_cash_after_debt,
+                "interest_paid": totals["interest_paid"],
+                "penalty_paid": totals["penalty_paid"],
+                "paid_principal": totals["paid_principal"],
+                "debt_balance_end": totals["debt_balance_end"],
+            }
         )
 
-        # 2.7 Optional early stop
+        # Early stop
         if stop_when_debts_cleared and _all_loans_cleared(loans):
             break
 
-    # 3. Return outputs
+    # 4. Return outputs
     return SimulationResult(cashflow_rows=cashflow_rows, schedule_rows=schedule_rows)
