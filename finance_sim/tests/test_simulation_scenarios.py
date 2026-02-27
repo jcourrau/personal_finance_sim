@@ -14,18 +14,21 @@ class FakeLoan:
     minimum_payment: float
     balance: float
 
+    def reset_balance(self) -> None:
+        pass
+
     def is_active(self, month: str) -> bool:
-        # Active only once due month is reached and balance remains
+        # Active only once the due month is reached and balance remains
         return month >= self.first_due_month and self.balance > 0
 
     def min_payment(self, month: str) -> float:
         return self.minimum_payment if self.is_active(month) else 0.0
 
-    def step(self, month: str, extra_payment: float) -> Dict:
-        # Pay minimum plus extra, capped by remaining balance
+    def step(self, month: str, payment: float) -> Dict:
+        # Pay minimum plus extra, capped by the remaining balance
         cash_out = 0.0
         if self.is_active(month):
-            cash_out = min(self.balance, self.minimum_payment + extra_payment)
+            cash_out = min(self.balance, float(payment))
             self.balance -= cash_out
 
         return {
@@ -39,23 +42,22 @@ class FakeLoan:
         }
 
 
-class AlwaysPayFirstActiveLoanPlan(PaymentPlan):
+class AlwaysPayFirstActiveLoanPlan():
     """
     Sends all available free cash to the first active loan only.
     """
-    def allocate(self, month: str, free_cash: float, active_loans: List[FakeLoan]) -> Dict[str, float]:
-        if not active_loans:
+    def allocate_payments(self, month: str, free_cash: float, active_loans: List[FakeLoan]) -> Dict[str, float]:
+        if not active_loans or free_cash <= 0:
             return {}
-        extra = max(0.0, free_cash)
-        return {active_loans[0].loan_id: extra}
+        return {active_loans[0].loan_id: free_cash}
 
 
-class PlanThatAlsoTriesInactiveId(PaymentPlan):
+class PlanThatAlsoTriesInactiveId():
     """
     Returns an allocation containing an extra entry for an inactive loan_id.
     This lets us test that the simulator filters out unknown or inactive ids.
     """
-    def allocate(self, month: str, free_cash: float, active_loans: List[FakeLoan]) -> Dict[str, float]:
+    def allocate_payments(self, month: str, free_cash: float, active_loans: List[FakeLoan]) -> Dict[str, float]:
         allocation: Dict[str, float] = {}
         if active_loans:
             allocation[active_loans[0].loan_id] = max(0.0, free_cash)

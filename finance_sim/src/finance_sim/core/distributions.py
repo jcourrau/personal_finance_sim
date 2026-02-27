@@ -4,7 +4,17 @@ from typing import Dict, List, Optional
 from finance_sim.core.loan import Loan
 
 
-def even_distribution(extra_budget: float, active_loans: List[Loan], _: Optional[List[str]] = None) -> Dict[str, float]:
+"""
+Distribution functions for PaymentPlan.allocate.
+All functions must accept the same arguments and return a Dict[str, float].
+_: -> must be included and ignore by the function.
+"""
+
+def even_distribution(
+        extra_budget: float,
+        active_loans: List[Loan],
+        _: Optional[List[str]] = None
+) -> Dict[str, float]:
     """
     Splits extra_budget evenly across all active loans.
 
@@ -17,7 +27,11 @@ def even_distribution(extra_budget: float, active_loans: List[Loan], _: Optional
     return {loan.loan_id: per_loan for loan in active_loans}
 
 
-def highest_rate_first(extra_budget: float, active_loans: List[Loan], _: Optional[List[str]] = None) -> Dict[str, float]:
+def highest_rate_first(
+        extra_budget: float,
+        active_loans: List[Loan],
+        _: Optional[List[str]] = None
+) -> Dict[str, float]:
     """
     Allocates all extra_budget to the loan with the highest annual_rate.
 
@@ -29,7 +43,11 @@ def highest_rate_first(extra_budget: float, active_loans: List[Loan], _: Optiona
     return {top.loan_id: extra_budget}
 
 
-def lowest_balance_first(extra_budget: float, active_loans: List[Loan], _: Optional[List[str]] = None) -> Dict[str, float]:
+def lowest_balance_first(
+        extra_budget: float,
+        active_loans: List[Loan],
+        _: Optional[List[str]] = None
+) -> Dict[str, float]:
     """
     Allocates all extra_budget to the loan with the lowest current balance.
 
@@ -41,7 +59,11 @@ def lowest_balance_first(extra_budget: float, active_loans: List[Loan], _: Optio
     return {top.loan_id: extra_budget}
 
 
-def proportional_to_balance(extra_budget: float, active_loans: List[Loan], _: Optional[List[str]] = None) -> Dict[str, float]:
+def proportional_to_balance(
+        extra_budget: float,
+        active_loans: List[Loan],
+        _: Optional[List[str]] = None
+) -> Dict[str, float]:
     """
     Splits extra_budget proportionally to each loan balance.
 

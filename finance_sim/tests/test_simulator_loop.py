@@ -19,14 +19,17 @@ class SimpleLoan:
     minimum: float
     balance: float
 
+    def reset_balance(self) -> None:
+        pass
+
     def is_active(self, month: str) -> bool:
         return self.balance > 0
 
     def min_payment(self, month: str) -> float:
         return self.minimum if self.balance > 0 else 0.0
 
-    def step(self, month: str, extra_payment: float) -> Dict:
-        payment = min(self.balance, self.minimum + extra_payment)
+    def step(self, month: str, payment: float) -> Dict:
+        payment = min(self.balance, self.minimum + payment)
         self.balance -= payment
 
         return {
@@ -40,12 +43,12 @@ class SimpleLoan:
         }
 
 
-class AvalanchePlan(PaymentPlan):
+class AvalanchePlan:
     """
     Always allocates all positive free_cash to the highest rate active loan.
     """
 
-    def allocate(self, month: str, free_cash: float, active_loans: List[SimpleLoan]) -> Dict[str, float]:
+    def allocate_payments(self, month: str, free_cash: float, active_loans: List[SimpleLoan]) -> Dict[str, float]:
         if free_cash <= 0 or not active_loans:
             return {}
 

@@ -90,46 +90,6 @@ def _sum_minimum_payments(month: str, active_loans: List[Loan]) -> float:
     return total
 
 
-def _calculate_free_cash(income: float, baseline_expenses: float, minimum_payments: float) -> float:
-    """
-    Computes free cash before extra debt payments.
-
-    free_cash = income - baseline_expenses - minimum_payments
-    """
-    return income - baseline_expenses - minimum_payments
-
-
-def _get_allocation(
-    plan: PaymentPlan,
-    month: str,
-    free_cash: float,
-    active_loans: List[Loan],
-) -> Dict[str, float]:
-    """
-    Requests an allocation from the plan and validates it.
-
-    Validation rules:
-    - Negative extra payments are not allowed (raise).
-    - Allocations for inactive or unknown loan ids are ignored.
-    """
-    raw_allocation = plan.allocate(month=month, free_cash=free_cash, active_loans=active_loans)
-
-    active_ids = {loan.loan_id for loan in active_loans}
-    allocation: Dict[str, float] = {}
-
-    for loan_id, extra_payment in raw_allocation.items():
-        try:
-            extra = float(extra_payment)
-        except (TypeError, ValueError) as exc:
-            raise ValueError(f"extra_payment for loan_id {loan_id} must be numeric") from exc
-        if extra < 0:
-            raise ValueError("extra_payment cannot be negative")
-        if loan_id in active_ids and extra > 0:
-            allocation[loan_id] = extra
-
-    return allocation
-
-
 def _empty_totals():
     totals = {
         "debt_cash_out": 0.0,
@@ -137,6 +97,8 @@ def _empty_totals():
         "penalty_paid": 0.0,
         "paid_principal": 0.0,
         "debt_balance_end": 0.0,
+        "minimum_paid": 0.0,
+        "extra_paid": 0.0,
     }
     return totals
 
@@ -144,7 +106,8 @@ def _empty_totals():
 def _apply_loan_steps(
     month: str,
     active_loans: List[Loan],
-    allocation: Dict[str, float],
+    minimum_paid: Dict[str, float],
+    extra_paid: Dict[str, float],
     schedule_rows: List[Dict],
 ) -> Dict[str, float]:
     """
@@ -155,10 +118,15 @@ def _apply_loan_steps(
     totals = _empty_totals()
 
     for loan in active_loans:
-        extra_payment = float(allocation.get(loan.loan_id, 0.0))
-        record = loan.step(month=month, extra_payment=extra_payment)
+        min_amount = float(minimum_paid.get(loan.loan_id, 0.0))
+        extra_amount = float(extra_paid.get(loan.loan_id, 0.0))
+        payment = min_amount + extra_amount
+
+        record = loan.step(month=month, payment=payment)
         schedule_rows.append(record)
 
+        totals["minimum_paid"] += min_amount
+        totals["extra_paid"] += extra_amount
         totals["debt_cash_out"] += float(record.get("cash_out", 0.0))
         totals["interest_paid"] += float(record.get("interest_paid", 0.0))
         totals["penalty_paid"] += float(record.get("penalty_paid", 0.0))
@@ -188,6 +156,7 @@ def run_simulation(
     plan: PaymentPlan,
     end_month: Optional[str] = None,
     stop_when_debts_cleared: bool = False,
+    carry_deficit: bool = True,
 ) -> SimulationResult:
     """
     Executes a month-by-month simulation and returns raw rows.
@@ -206,6 +175,7 @@ def run_simulation(
     - No pandas used here for efficiency
     - The plan does not mutate loans, only provides allocation
     """
+
     # 1. Validations
     if not months:
         raise ValueError("months cannot be empty")
@@ -214,7 +184,7 @@ def run_simulation(
     cashflow_rows: List[Dict] = []
     schedule_rows: List[Dict] = []
 
-    # 2. Initialize Loans Balance
+    # 2. Initialize Entities
     _initialize_loans(loans)
 
     # 3. Monthly loop
@@ -223,18 +193,28 @@ def run_simulation(
             break
 
         income, baseline_expenses = _get_month_inputs(month, income_series, expense_series)
+
+        # All loan calculations should exist in one method.
         active_loans = _get_active_loans(month, loans)
-        minimum_payments = _sum_minimum_payments(month, active_loans)
-        original_free_cash = _calculate_free_cash(income, baseline_expenses, minimum_payments)
+        free_cash_before_debt = income - baseline_expenses  # cash before any debt payments
 
-        if active_loans:
-            allocation = _get_allocation(plan, month, original_free_cash, active_loans)
-            totals = _apply_loan_steps(month, active_loans, allocation, schedule_rows)
-        else:
-            totals = _empty_totals()
+        # Get minimum and extra payment allocation.
+        should_allocate = active_loans and free_cash_before_debt > 0
+        default_allocation = ({}, {})
 
-        free_cash_after_debt = original_free_cash - totals["debt_cash_out"]
-        free_cash_after_debt = 0.0 if 0 > free_cash_after_debt > -1e-9 else free_cash_after_debt
+        minimum_paid_map, extra_paid_map = (
+            plan.allocate_payments(month, free_cash_before_debt, active_loans)
+            if should_allocate else default_allocation
+        )
+
+        totals = (
+            _apply_loan_steps(month, active_loans, minimum_paid_map, extra_paid_map, schedule_rows)
+            if active_loans else _empty_totals()
+        )
+
+        free_cash_after_debt = free_cash_before_debt - totals["debt_cash_out"]   # includes minimum + extra
+        free_cash_after_debt = 0.0 if 0 > free_cash_after_debt > -1e-9 else free_cash_after_debt  # float cleanup
+        free_cash_after_minimums = free_cash_before_debt - totals.get("minimum_paid", 0.0)
 
         #  Append cashflow row
         cashflow_rows.append(
@@ -242,14 +222,16 @@ def run_simulation(
                 "month": month,
                 "income": income,
                 "baseline_expenses": baseline_expenses,
-                "minimum_payments": minimum_payments,
-                "free_cash_after_minimum_payments": original_free_cash,
-                "debt_cash_out": totals["debt_cash_out"],
-                "free_cash_after_debt": free_cash_after_debt,
-                "interest_paid": totals["interest_paid"],
-                "penalty_paid": totals["penalty_paid"],
-                "paid_principal": totals["paid_principal"],
-                "debt_balance_end": totals["debt_balance_end"],
+                "cash_before_debt": free_cash_before_debt,
+                "cash_after_minimums": free_cash_after_minimums,
+                "cash_after_debt": free_cash_after_debt,
+                "minimum_paid": totals.get("minimum_paid", 0.0),
+                "extra_paid": totals.get("extra_paid", 0.0),
+                "debt_cash_paid": totals.get("debt_cash_out", 0.0),
+                "interest_paid": totals.get("interest_paid", 0.0),
+                "penalty_paid": totals.get("penalty_paid", 0.0),
+                "paid_principal": totals.get("paid_principal", 0.0),
+                "debt_balance_end": totals.get("debt_balance_end", 0.0),
             }
         )
 
